@@ -1,49 +1,24 @@
+import torch
 import numpy as np
-from math import log10, sqrt
-from skimage.metrics import structural_similarity as compare_ssim
+import torch.nn.functional as F
 
+def compute_measure(x, y, pred, dr):
+    def mse(a, b): return ((a - b) ** 2).mean()
+    def rmse(a, b): return np.sqrt(mse(a, b))
+    def psnr(a, b, d): return 10 * np.log10((d ** 2) / mse(a, b))
 
-def compute_MSE(img1, img2):
-    img1 = img1.astype(np.float32)
-    img2 = img2.astype(np.float32)
-    return np.mean((img1 - img2) ** 2)
+    def ssim(img1, img2, d):
+        t1, t2 = torch.from_numpy(img1).unsqueeze(0).unsqueeze(0).float(), torch.from_numpy(img2).unsqueeze(0).unsqueeze(0).float()
+        def gauss(ws, sig):
+            g = torch.exp(-torch.arange(ws).float()**2/(2*sig**2))
+            return (g / g.sum()).unsqueeze(1).mm((g / g.sum()).unsqueeze(0)).unsqueeze(0).unsqueeze(0)
+        window = gauss(11, 1.5).type_as(t1)
+        mu1, mu2 = F.conv2d(t1, window, padding=5), F.conv2d(t2, window, padding=5)
+        sigma1_sq = F.conv2d(t1*t1, window, padding=5) - mu1**2
+        sigma2_sq = F.conv2d(t2*t2, window, padding=5) - mu2**2
+        sigma12 = F.conv2d(t1*t2, window, padding=5) - mu1*mu2
+        c1, c2 = (0.01*d)**2, (0.03*d)**2
+        ssim_map = ((2*mu1*mu2+c1)*(2*sigma12+c2))/((mu1**2+mu2**2+c1)*(sigma1_sq+sigma2_sq+c2))
+        return ssim_map.mean().item()
 
-
-def compute_RMSE(img1, img2):
-    mse = compute_MSE(img1, img2)
-    return sqrt(mse)
-
-
-def compute_PSNR(img1, img2, data_range):
-    mse = compute_MSE(img1, img2)
-    if mse == 0:
-        return 100.0
-    return 10 * log10((data_range ** 2) / mse)
-
-
-def compute_SSIM(img1, img2, data_range):
-    img1 = img1.astype(np.float32)
-    img2 = img2.astype(np.float32)
-    return compare_ssim(img1, img2, data_range=data_range)
-
-
-def compute_measure(x, y, pred, data_range):
-    """
-    x: noisy input image
-    y: ground-truth image
-    pred: predicted image
-    data_range: dynamic range, e.g. trunc_max - trunc_min
-    """
-    original_result = (
-        compute_PSNR(x, y, data_range),
-        compute_SSIM(x, y, data_range),
-        compute_RMSE(x, y),
-    )
-
-    pred_result = (
-        compute_PSNR(pred, y, data_range),
-        compute_SSIM(pred, y, data_range),
-        compute_RMSE(pred, y),
-    )
-
-    return original_result, pred_result
+    return (psnr(x, y, dr), ssim(x, y, dr), rmse(x, y)), (psnr(pred, y, dr), ssim(pred, y, dr), rmse(pred, y))
