@@ -38,7 +38,7 @@ class ResShift_CT(nn.Module):
         super(ResShift_CT, self).__init__()
         self.model = UNetModel(
             image_size=image_size,
-            in_channels=in_ch,
+            in_channels=in_ch + in_ch,
             out_channels=out_ch,
             model_channels=model_channels,
             num_res_blocks=2,

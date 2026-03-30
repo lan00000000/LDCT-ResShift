@@ -6,7 +6,7 @@ def compute_measure(x, y, pred, dr):
     def mse(a, b): return ((a - b) ** 2).mean()
     def rmse(a, b): return np.sqrt(mse(a, b))
     def psnr(a, b, d): return 10 * np.log10((d ** 2) / mse(a, b))
-
+    
     def ssim(img1, img2, d):
         t1, t2 = torch.from_numpy(img1).unsqueeze(0).unsqueeze(0).float(), torch.from_numpy(img2).unsqueeze(0).unsqueeze(0).float()
         def gauss(ws, sig):

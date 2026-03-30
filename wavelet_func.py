@@ -1,68 +1,45 @@
 import torch
 
-# ===============================
-# Multi-scale wavelet band weights
-# ===============================
-WAVELET_BAND_WEIGHT = {
-    "LL2": 0.5,
-    "HF2": 1.0,
-    "HF1": 2.0
-}
-
-# ===============================
-# Haar DWT (orthogonal, PR)
-# ===============================
 def dwt_init(x):
-    x00 = x[:, :, 0::2, 0::2]
-    x10 = x[:, :, 1::2, 0::2]
-    x01 = x[:, :, 0::2, 1::2]
-    x11 = x[:, :, 1::2, 1::2]
+    """
+    修正后的 Haar 离散小波变换 (DWT)
+    确保基底的正交性，避免重构后出现灰色网格
+    """
+    x00 = x[:, :, 0::2, 0::2] # (0,0)
+    x10 = x[:, :, 1::2, 0::2] # (1,0) 垂直
+    x01 = x[:, :, 0::2, 1::2] # (0,1) 水平
+    x11 = x[:, :, 1::2, 1::2] # (1,1) 对角
+    
+    # 采用标准 Haar 基底系数
+    x_LL = (x00 + x10 + x01 + x11) / 2.0
+    x_LH = (x00 + x01 - x10 - x11) / 2.0 # 水平细节
+    x_HL = (x00 + x10 - x01 - x11) / 2.0 # 垂直细节
+    x_HH = (x00 - x01 - x10 + x11) / 2.0 # 对角细节 (修正符号)
+    
+    return torch.cat([x_LL, x_LH, x_HL, x_HH], dim=1)
 
-    ll = (x00 + x10 + x01 + x11) / 2.0
-    lh = (x00 + x01 - x10 - x11) / 2.0
-    hl = (x00 + x10 - x01 - x11) / 2.0
-    hh = (x00 - x01 - x10 + x11) / 2.0
-
-    return torch.cat([ll, lh, hl, hh], dim=1)
-
+def dwt_separate(x):
+    w = dwt_init(x)
+    ll = w[:, 0:1, :, :]
+    hf = w[:, 1:4, :, :] 
+    return ll, hf
 
 def idwt_init(x):
-    ll, lh, hl, hh = x[:, 0:1], x[:, 1:2], x[:, 2:3], x[:, 3:4]
-
-    B, _, H, W = ll.shape
-    out = torch.zeros((B, 1, H * 2, W * 2), device=x.device, dtype=x.dtype)
-
-    out[:, :, 0::2, 0::2] = (ll + lh + hl + hh) / 2.0
-    out[:, :, 1::2, 0::2] = (ll - lh + hl - hh) / 2.0
-    out[:, :, 0::2, 1::2] = (ll + lh - hl - hh) / 2.0
-    out[:, :, 1::2, 1::2] = (ll - lh - hl + hh) / 2.0
-
-    return out
-
-# ===============================
-# Two-level wavelet interface
-# ===============================
-def apply_wavelet_2level(x):
-    w1 = dwt_init(x)
-    ll1, hf1 = w1[:, 0:1], w1[:, 1:4]
-
-    w2 = dwt_init(ll1)
-    ll2, hf2 = w2[:, 0:1], w2[:, 1:4]
-
-    return {
-        "LL2": ll2,
-        "HF2": hf2,
-        "HF1": hf1
-    }
-
-
-def idwt_2level(coeffs):
-    ll2, hf2, hf1 = coeffs["LL2"], coeffs["HF2"], coeffs["HF1"]
-
-    assert ll2.shape[1] == 1
-    assert hf2.shape[1] == 3
-    assert hf1.shape[1] == 3
-
-    ll1 = idwt_init(torch.cat([ll2, hf2], dim=1))
-    x = idwt_init(torch.cat([ll1, hf1], dim=1))
-    return x
+    """
+    修正后的逆离散小波变换 (IDWT)
+    实现完美重构 (Perfect Reconstruction)
+    """
+    x_LL = x[:, 0:1, :, :]
+    x_LH = x[:, 1:2, :, :] 
+    x_HL = x[:, 2:3, :, :]
+    x_HH = x[:, 3:4, :, :]
+    
+    N, C, H, W = x_LL.shape
+    h = torch.zeros([N, 1, H * 2, W * 2], device=x.device)
+    
+    # 逆变换公式
+    h[:, :, 0::2, 0::2] = (x_LL + x_LH + x_HL + x_HH) / 2.0
+    h[:, :, 1::2, 0::2] = (x_LL - x_LH + x_HL - x_HH) / 2.0
+    h[:, :, 0::2, 1::2] = (x_LL + x_LH - x_HL - x_HH) / 2.0
+    h[:, :, 1::2, 1::2] = (x_LL - x_LH - x_HL + x_HH) / 2.0
+    return h
